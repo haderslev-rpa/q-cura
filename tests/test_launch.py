@@ -9,7 +9,7 @@ async def main():
     # -------------------------------------------------
     # 1. Opret browser-session (run-sandhed)
     # -------------------------------------------------
-    session = BrowserSession(headless=False, debug=True)
+    session = BrowserSession(headless=False, debug=True, video=True)
     await session.start()
     page = await session.new_page()
 
@@ -28,7 +28,7 @@ async def main():
         # -------------------------------------------------
         # 5. Tag print-screen (HER oprettes mappen)
         # -------------------------------------------------
-        await session.recorder.screenshot(
+        await session.screenshot(
             page=page,
             name="STEP_1_cura_efter_login"
         )

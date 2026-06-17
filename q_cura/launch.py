@@ -21,18 +21,18 @@ async def launch_cura(page, session):
     await page.wait_for_load_state("domcontentloaded")
 
     # Screenshot (kun hvis debug=True eller always=True)
-    await session.recorder.screenshot(page, "STEP_1_startside")
+    await session.screenshot(page, "STEP_1_startside")
 
     # Login
     await page.fill("#username", credential.username)
     await page.fill("#password", credential.password)
 
-    await session.recorder.screenshot(page, "STEP_2_før_login")
+    await session.screenshot(page, "STEP_2_før_login")
 
     await page.click("#kc-login")
     await asyncio.sleep(1)
 
-    await session.recorder.screenshot(page, "STEP_3_efter_login")
+    await session.screenshot(page, "STEP_3_efter_login")
 
     await page.wait_for_selector("#kc-login", state="detached")
 

@@ -18,25 +18,25 @@ async def liste_forebyggende_hjaemmebesoeg(
     await page.goto(url)
     await page.wait_for_load_state("domcontentloaded")
 
-    await session.recorder.screenshot(page, "STEP_1_forebyggende_side")
+    await session.screenshot(page, "STEP_1_forebyggende_side")
 
     # 2. Valider side
     side_titel_selector = 'span.ng-scope:has-text("Forebyggende hjemmebesøg")'
     await page.wait_for_selector(side_titel_selector)
 
-    await session.recorder.screenshot(page, "STEP_2_side_valideret")
+    await session.screenshot(page, "STEP_2_side_valideret")
 
     # 3. Åbn filter
     await page.click("md-icon.mdi-filter-outline")
     await page.wait_for_selector("md-dialog")
 
-    await session.recorder.screenshot(page, "STEP_3_filter_dialog_åben")
+    await session.screenshot(page, "STEP_3_filter_dialog_åben")
 
     # 4. Udfyld alder
     await page.fill('input[name="minAge"]', str(alder))
     await page.fill('input[name="maxAge"]', str(alder))
 
-    await session.recorder.screenshot(page, "STEP_4_alder_udfyldt")
+    await session.screenshot(page, "STEP_4_alder_udfyldt")
 
     await page.wait_for_timeout(1000)
 
@@ -55,7 +55,7 @@ async def liste_forebyggende_hjaemmebesoeg(
     await checkbox.scroll_into_view_if_needed()
     await checkbox.click(force=True)
 
-    await session.recorder.screenshot(page, "STEP_6_fravaelg_alle")
+    await session.screenshot(page, "STEP_6_fravaelg_alle")
 
     await page.wait_for_timeout(500)
 
@@ -75,7 +75,7 @@ async def liste_forebyggende_hjaemmebesoeg(
     )
     await selected_option.wait_for(state="attached")
 
-    await session.recorder.screenshot(page, f"STEP_7_{maaned}_valgt")
+    await session.screenshot(page, f"STEP_7_{maaned}_valgt")
 
     # Luk dropdown
     await page.keyboard.press("Escape")
@@ -86,7 +86,7 @@ async def liste_forebyggende_hjaemmebesoeg(
         state="detached"
     )
 
-    await session.recorder.screenshot(page, "STEP_8_dropdown_lukket")
+    await session.screenshot(page, "STEP_8_dropdown_lukket")
 
     # Klik Søg
     search_btn = page.locator(
@@ -99,7 +99,7 @@ async def liste_forebyggende_hjaemmebesoeg(
 
     await page.wait_for_timeout(5000)
 
-    await session.recorder.screenshot(page, "STEP_9_soeg_klikket")
+    await session.screenshot(page, "STEP_9_soeg_klikket")
 
     # ✅ Stabil tabel-load
     await page.wait_for_selector("//md-table-container//tr[contains(@class,'md-row')]")
@@ -153,7 +153,7 @@ async def liste_forebyggende_hjaemmebesoeg(
 
         data.append(row_dict)
 
-    await session.recorder.screenshot(page, "STEP_10_data_hentet")
+    await session.screenshot(page, "STEP_10_data_hentet")
 
     # Gå til Mit Overblik
     mit_overblik_btn = page.locator(
@@ -166,7 +166,7 @@ async def liste_forebyggende_hjaemmebesoeg(
 
     await page.wait_for_load_state("domcontentloaded")
 
-    await session.recorder.screenshot(page, "STEP_11_mit_overblik")
+    await session.screenshot(page, "STEP_11_mit_overblik")
 
     # ✅ STOP TIMER (samlet)
     end_time = time.perf_counter()
@@ -196,12 +196,12 @@ async def liste_forebyggende_hjaemmebesoeg(
     )
 
     await page.locator('md-select[aria-label="Fødselsmåned"]').focus()
-    await session.recorder.screenshot(page, f"STEP_5_foedselsmaaned_{maaned}")
+    await session.screenshot(page, f"STEP_5_foedselsmaaned_{maaned}")
 
     # 6. Søg
     await page.click('button:has-text("Søg")')
     await page.wait_for_timeout(25000)
 
-    await session.recorder.screenshot(page, "STEP_6_efter_soeg")
+    await session.screenshot(page, "STEP_6_efter_soeg")
 
 """
