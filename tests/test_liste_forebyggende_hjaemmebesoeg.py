@@ -1,8 +1,8 @@
 import asyncio
 
 from q_haderslev_vbo.playwright.browser_session import BrowserSession
-from q_cura.launch import launch_cura
-from q_cura.liste_forebyggende_hjaemmebesoeg import (liste_forebyggende_hjaemmebesoeg
+from q_cura.functionality.launch import launch_cura
+from q_cura.functionality.liste_forebyggende_hjaemmebesoeg import (liste_forebyggende_hjaemmebesoeg
 )
 
 

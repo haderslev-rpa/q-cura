@@ -1,7 +1,7 @@
 import asyncio
 from playwright.async_api import async_playwright
 
-from q_cura.launch import launch_cura
+from q_cura.functionality.launch import launch_cura
 from q_haderslev_vbo.playwright.browser_session import BrowserSession
 
 
