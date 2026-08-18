@@ -14,7 +14,7 @@ async def launch_cura(page, session):
 
     # Hent credentials
     AutomationServer.from_environment()
-    credential = Credential.get_credential("API_CURA")
+    credential = Credential.get_credential("DIRXBLA")
 
     # Gå til Cura
     await page.goto(URL)
