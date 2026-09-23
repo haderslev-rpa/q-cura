@@ -1,4 +1,3 @@
-
 import asyncio
 
 from q_haderslev_vbo.playwright.browser_session import (
@@ -23,21 +22,15 @@ YDELSE_NAVN = (
 
 # Brug det korte leverandørnavn, som står
 # i Hjælpemidler-oversigten.
-#
-# Funktionen accepterer, at dialogen tilføjer:
-# "(Eksterne ydelsesleverandører)"
 LEVERANDOER = "(Hjælpemidler) Sahva A/S"
 
-# Dansk dato i rækkefølgen:
-# dag, måned, år.
-#
+# Dansk dato i rækkefølgen dag, måned, år.
 # Punktum er ikke nødvendigt.
-#
-# Gyldige eksempler:
-# - 30-9-2026
-# - 30/09/2026
-# - 30.09.2026
 SLUTDATO = "30-9-2026"
+
+# Skal være en eksisterende valgmulighed
+# i Cura-feltet "Afslutningsårsag".
+AFSLUTNINGSAARSAG = "Klarer sig selv"
 
 
 async def main() -> None:
@@ -87,13 +80,18 @@ async def main() -> None:
 
         print(
             f"Dansk slutdato-input: "
-            f"{SLUTDATO}\n"
+            f"{SLUTDATO}"
+        )
+
+        print(
+            f"Afslutningsårsag: "
+            f"{AFSLUTNINGSAARSAG}\n"
         )
 
         # FAST BREAKPOINT 1:
         # Testen stopper altid her ved normal
         # debug-kørsel i VS Code.
-        #breakpoint()
+        breakpoint()
 
         resultat = await afslut_ydelse(
             page=page,
@@ -102,6 +100,7 @@ async def main() -> None:
             ydelse_navn=YDELSE_NAVN,
             leverandoer=LEVERANDOER,
             slutdato=SLUTDATO,
+            afslutningsaarsag=AFSLUTNINGSAARSAG,
 
             # FAST BREAKPOINT 2 ligger inde i
             # funktionen lige før Gem og bestil.
@@ -124,4 +123,3 @@ async def main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(main())
-

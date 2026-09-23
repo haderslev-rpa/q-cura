@@ -6,6 +6,12 @@ from typing import Any
 
 from playwright.async_api import Locator, Page
 
+from q_cura.functionality.haandter_adgang_til_borger_popup import (
+    haandter_adgang_til_borger_popup,
+)
+from playwright.async_api import Locator, Page
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
+
 
 BASE_URL = "https://haderslev.cura.columna.dk"
 LEVERANDOER_SUFFIX = "(Eksterne ydelsesleverandører)"
@@ -146,6 +152,10 @@ async def aaben_borgerens_ydelser(
     """
     Åbner borgerens side med Hjælpemidler.
 
+    Hvis Cura viser dialogen:
+    "Du har ikke adgang til denne borger",
+    håndteres dialogen automatisk.
+
     Output:
         Returnerer Playwright-locatoren til det åbne
         Hjælpemidler-panel.
@@ -163,21 +173,94 @@ async def aaben_borgerens_ydelser(
         "?caseTypes=Hj%C3%A6lpemidler"
     )
 
-    await page.goto(url)
-    await page.wait_for_load_state(
-        "domcontentloaded"
+    await page.goto(
+        url,
+        wait_until="domcontentloaded",
     )
 
+    print(
+        f"Borgerens Hjælpemidler-side er åbnet: "
+        f"{citizen_id}"
+    )
+
+    # Cura kan vise adgangspopup-dialogen lidt efter,
+    # at siden er åbnet.
+    adgangspopup_haandteret = (
+        await haandter_adgang_til_borger_popup(
+            page=page,
+            session=session,
+            timeout_ms=10_000,
+        )
+    )
+
+    print(
+        "Adgangspopup håndteret: "
+        f"{adgangspopup_haandteret}"
+    )
+
+    # Når popup-dialogen er håndteret eller ikke blev vist,
+    # venter vi på Hjælpemidler-panelet.
     panel_titel = page.locator(
         "mat-expansion-panel-header "
         "mat-panel-title",
         has_text="Hjælpemidler",
     ).first
 
-    await panel_titel.wait_for(
-        state="visible",
-        timeout=30_000,
-    )
+    try:
+        await panel_titel.wait_for(
+            state="visible",
+            timeout=30_000,
+        )
+
+    except PlaywrightTimeoutError as fejl:
+        await session.screenshot(
+            page,
+            "ERROR_hjaelpemidler_panel_ikke_fundet",
+        )
+
+        # Ekstra fejlinformation, som fortæller,
+        # om en dialog stadig blokerer siden.
+        synlige_dialoger = page.locator(
+            "md-dialog:visible"
+        )
+
+        antal_synlige_dialoger = (
+            await synlige_dialoger.count()
+        )
+
+        dialog_tekster: list[str] = []
+
+        for index in range(
+            antal_synlige_dialoger
+        ):
+            dialog_tekst = " ".join(
+                (
+                    await synlige_dialoger
+                    .nth(index)
+                    .inner_text()
+                ).split()
+            )
+
+            dialog_tekster.append(
+                dialog_tekst[:300]
+            )
+
+        if dialog_tekster:
+            dialog_beskrivelse = (
+                "\nSynlige dialoger:\n - "
+                + "\n - ".join(dialog_tekster)
+            )
+        else:
+            dialog_beskrivelse = (
+                "\nDer blev ikke fundet nogen "
+                "synlige md-dialoger."
+            )
+
+        raise RuntimeError(
+            "Hjælpemidler-panelet blev ikke vist "
+            "efter åbning af borgeren."
+            f"{dialog_beskrivelse}"
+        ) from fejl
 
     panel = panel_titel.locator(
         "xpath=ancestor::mat-expansion-panel[1]"
@@ -187,12 +270,13 @@ async def aaben_borgerens_ydelser(
         "mat-expansion-panel-header"
     )
 
-    if (
+    panel_er_aabent = (
         await panel_header.get_attribute(
             "aria-expanded"
         )
-        != "true"
-    ):
+    )
+
+    if panel_er_aabent != "true":
         await panel_header.click()
 
     await panel.locator(
@@ -525,6 +609,305 @@ async def aktiver_redigering(
 
     return slutdato_input
 
+async def vaelg_afslutningsaarsag(
+    page: Page,
+    session: Any,
+    dialog: Locator,
+    afslutningsaarsag: str,
+    *,
+    timeout_ms: int = 15_000,
+) -> str:
+    """
+    Vælger en eksisterende afslutningsårsag i Cura.
+
+    Input:
+        page:
+            Den aktive Playwright-side.
+
+        session:
+            BrowserSession, der bruges til screenshots.
+
+        dialog:
+            Playwright-locatoren til ydelsesdialogen.
+
+        afslutningsaarsag:
+            Den synlige tekst på den valgmulighed,
+            der skal vælges.
+
+            Eksempel:
+            "Test"
+
+    Output:
+        Returnerer teksten på den valgte afslutningsårsag.
+
+        Eksempel:
+        "Test"
+
+    Exceptions:
+        ValueError:
+            Hvis afslutningsårsagen er tom.
+
+        RuntimeError:
+            Hvis feltet ikke findes, ikke bliver aktivt,
+            valgmuligheden ikke findes, eller Cura ikke
+            registrerer valget.
+    """
+    afslutningsaarsag = afslutningsaarsag.strip()
+
+    if not afslutningsaarsag:
+        raise ValueError(
+            "afslutningsaarsag må ikke være tom."
+        )
+
+    # Feltet er et Angular Material md-select.
+    # aria-label er den mest stabile markering i den HTML,
+    # som Cura viser.
+    afslutningsaarsag_select = dialog.locator(
+        'md-select[aria-label="Afslutningsårsag"]'
+    ).first
+
+    try:
+        await afslutningsaarsag_select.wait_for(
+            state="visible",
+            timeout=timeout_ms,
+        )
+
+    except PlaywrightTimeoutError as fejl:
+        await session.screenshot(
+            page,
+            "ERROR_afslutningsaarsag_felt_ikke_fundet",
+        )
+
+        raise RuntimeError(
+            "Feltet 'Afslutningsårsag' blev ikke fundet "
+            "i ydelsesdialogen."
+        ) from fejl
+
+    print(
+        "Feltet 'Afslutningsårsag' blev fundet."
+    )
+
+    # Feltet kan være deaktiveret, indtil Cura har
+    # registreret slutdatoen.
+    felt_er_aktivt = False
+
+    for forsoeg in range(1, 41):
+        disabled_attribut = (
+            await afslutningsaarsag_select.get_attribute(
+                "disabled"
+            )
+        )
+
+        aria_disabled = (
+            await afslutningsaarsag_select.get_attribute(
+                "aria-disabled"
+            )
+        )
+
+        playwright_enabled = (
+            await afslutningsaarsag_select.is_enabled()
+        )
+
+        if (
+            playwright_enabled
+            and disabled_attribut is None
+            and aria_disabled != "true"
+        ):
+            felt_er_aktivt = True
+            break
+
+        if forsoeg % 4 == 0:
+            print(
+                "Venter på, at feltet "
+                "'Afslutningsårsag' bliver aktivt. "
+                f"Kontrol {forsoeg} af 40."
+            )
+
+        await page.wait_for_timeout(250)
+
+    if not felt_er_aktivt:
+        disabled_attribut = (
+            await afslutningsaarsag_select.get_attribute(
+                "disabled"
+            )
+        )
+
+        aria_disabled = (
+            await afslutningsaarsag_select.get_attribute(
+                "aria-disabled"
+            )
+        )
+
+        await session.screenshot(
+            page,
+            "ERROR_afslutningsaarsag_felt_deaktiveret",
+        )
+
+        raise RuntimeError(
+            "Feltet 'Afslutningsårsag' blev ikke aktivt. "
+            "Cura har muligvis ikke registreret slutdatoen. "
+            f"disabled={disabled_attribut!r}, "
+            f"aria-disabled={aria_disabled!r}."
+        )
+
+    print(
+        "Feltet 'Afslutningsårsag' er aktivt."
+    )
+
+    await afslutningsaarsag_select.scroll_into_view_if_needed()
+    await afslutningsaarsag_select.click()
+
+    # Angular Material placerer rullemenuen i overlay-containeren
+    # uden for selve dialog-elementet. Derfor søger vi på page
+    # og ikke kun inde i dialog.
+    aaben_select_container = page.locator(
+        "div.md-select-menu-container.md-active"
+    ).last
+
+    try:
+        await aaben_select_container.wait_for(
+            state="visible",
+            timeout=timeout_ms,
+        )
+
+    except PlaywrightTimeoutError as fejl:
+        await session.screenshot(
+            page,
+            "ERROR_afslutningsaarsag_menu_ikke_aabnet",
+        )
+
+        raise RuntimeError(
+            "Rullemenuen til 'Afslutningsårsag' "
+            "blev ikke åbnet."
+        ) from fejl
+
+    # Udskriv de viste valgmuligheder.
+    muligheder = aaben_select_container.locator(
+        "md-option"
+    )
+
+    mulighedstekster: list[str] = []
+
+    for index in range(await muligheder.count()):
+        mulighed = muligheder.nth(index)
+
+        tekst = " ".join(
+            (await mulighed.inner_text()).split()
+        )
+
+        if tekst:
+            mulighedstekster.append(tekst)
+
+    print(
+        "Tilgængelige afslutningsårsager:"
+    )
+
+    for mulighedstekst in mulighedstekster:
+        print(
+            f"  - {mulighedstekst}"
+        )
+
+    # Brug et præcist tekstmatch. re.escape sikrer, at
+    # specialtegn i input ikke bliver opfattet som regex.
+    valgt_mulighed = aaben_select_container.locator(
+        "md-option"
+    ).filter(
+        has_text=re.compile(
+            rf"^\s*{re.escape(afslutningsaarsag)}\s*$",
+            re.IGNORECASE,
+        )
+    ).first
+
+    try:
+        await valgt_mulighed.wait_for(
+            state="visible",
+            timeout=timeout_ms,
+        )
+
+    except PlaywrightTimeoutError as fejl:
+        await page.keyboard.press("Escape")
+
+        await session.screenshot(
+            page,
+            "ERROR_afslutningsaarsag_ikke_fundet",
+        )
+
+        tilgaengelige = (
+            ", ".join(mulighedstekster)
+            if mulighedstekster
+            else "[ingen muligheder fundet]"
+        )
+
+        raise RuntimeError(
+            f"Afslutningsårsagen {afslutningsaarsag!r} "
+            "blev ikke fundet i rullemenuen. "
+            f"Tilgængelige muligheder: {tilgaengelige}"
+        ) from fejl
+
+    await valgt_mulighed.scroll_into_view_if_needed()
+    await valgt_mulighed.click()
+
+    # Vent på, at rullemenuen lukker.
+    try:
+        await aaben_select_container.wait_for(
+            state="hidden",
+            timeout=timeout_ms,
+        )
+
+    except PlaywrightTimeoutError as fejl:
+        await session.screenshot(
+            page,
+            "ERROR_afslutningsaarsag_menu_lukkede_ikke",
+        )
+
+        raise RuntimeError(
+            "Afslutningsårsagen blev klikket, men "
+            "rullemenuen lukkede ikke."
+        ) from fejl
+
+    # Cura viser den valgte tekst i md-select-value.
+    valgt_tekst_locator = afslutningsaarsag_select.locator(
+        "md-select-value"
+    ).first
+
+    valgt_tekst = " ".join(
+        (
+            await valgt_tekst_locator.inner_text()
+        ).split()
+    )
+
+    print(
+        f"Valgt afslutningsårsag i Cura: "
+        f"{valgt_tekst!r}"
+    )
+
+    if (
+        _normaliser_tekst(valgt_tekst)
+        != _normaliser_tekst(afslutningsaarsag)
+    ):
+        await session.screenshot(
+            page,
+            "ERROR_afslutningsaarsag_ikke_registreret",
+        )
+
+        raise RuntimeError(
+            "Cura registrerede ikke den forventede "
+            "afslutningsårsag. "
+            f"Forventet: {afslutningsaarsag!r}. "
+            f"Fundet: {valgt_tekst!r}."
+        )
+
+    # Flyt fokus væk fra select-feltet, så Angular-formularen
+    # får mulighed for at færdiggøre sin validering.
+    await page.keyboard.press("Tab")
+    await page.wait_for_timeout(500)
+
+    await session.screenshot(
+        page,
+        "STEP_afslutningsaarsag_valgt",
+    )
+
+    return valgt_tekst
 
 async def udfyld_slutdato_og_gem(
     page: Page,
@@ -532,50 +915,40 @@ async def udfyld_slutdato_og_gem(
     dialog: Locator,
     slutdato_input: Locator,
     slutdato: str | date | datetime,
+    afslutningsaarsag: str,
     stop_foer_gem: bool = True,
 ) -> None:
     """
-    Udfylder slutdatoen og gemmer ydelsen.
+    Udfylder slutdato og afslutningsårsag og gemmer ydelsen.
 
     Input:
-        page:
-            Den aktive Playwright-side.
-
-        session:
-            BrowserSession, som blandt andet bruges til screenshots.
-
-        dialog:
-            Playwright-locatoren til ydelsesdialogen.
-
-        slutdato_input:
-            Playwright-locatoren til feltet "Ydelse afsluttes".
-
         slutdato:
             Datoen forventes i dansk rækkefølge:
             dag, måned, år.
 
             Punktum er ikke påkrævet.
 
-            Gyldige eksempler:
+            Eksempler:
             - "30-9-2026"
             - "30/09/2026"
             - "30.09.2026"
-            - date(2026, 9, 30)
-            - datetime(2026, 9, 30)
+
+        afslutningsaarsag:
+            Teksten på en eksisterende valgmulighed
+            i Cura-feltet "Afslutningsårsag".
+
+            Eksempel:
+            "Test"
 
         stop_foer_gem:
-            Hvis værdien er True, stopper funktionen ved et breakpoint,
-            umiddelbart før der klikkes på "Gem og bestil".
+            Stopper ved et breakpoint umiddelbart før
+            "Gem og bestil", når værdien er True.
 
     Output:
-        Funktionen returnerer None.
+        Returnerer None.
 
-        Ved succes:
-        - Slutdatoen er udfyldt.
-        - "Gem og bestil" er blevet aktiv.
-        - Sikkerhedsbreakpointet er passeret.
-        - Der er klikket på "Gem og bestil".
-        - Ydelsesdialogen er lukket.
+        Ved succes er slutdato og afslutningsårsag
+        registreret, ydelsen gemt og dialogen lukket.
     """
     formateret_slutdato = _format_dansk_dato(
         slutdato
@@ -586,7 +959,6 @@ async def udfyld_slutdato_og_gem(
         f"konverteres til {formateret_slutdato!r}."
     )
 
-    # Kontrollér, at slutdatofeltet stadig er tilgængeligt.
     await slutdato_input.wait_for(
         state="visible",
         timeout=15_000,
@@ -594,101 +966,154 @@ async def udfyld_slutdato_og_gem(
 
     if await slutdato_input.is_disabled():
         raise RuntimeError(
-            "Feltet 'Ydelse afsluttes' er deaktiveret, "
-            "og slutdatoen kan derfor ikke udfyldes."
+            "Feltet 'Ydelse afsluttes' er deaktiveret."
         )
 
-    # Udfyld datoen i det format, Cura forventer.
-    await slutdato_input.fill(
-        formateret_slutdato
+    # Skriv datoen som tastetryk, så Cura/Angular
+    # registrerer brugerens indtastning.
+    await slutdato_input.click()
+    await slutdato_input.press("Control+A")
+    await slutdato_input.press("Backspace")
+
+    await slutdato_input.press_sequentially(
+        formateret_slutdato,
+        delay=100,
     )
-
-    # Flyt fokus væk fra feltet.
-    # Det får Angular til at registrere ændringen.
-    await slutdato_input.press("Tab")
-
-    # Giv Cura et kort øjeblik til at validere feltet.
-    await page.wait_for_timeout(500)
 
     faktisk_dato = (
         await slutdato_input.input_value()
     ).strip()
 
-    print(
-        f"Slutdatofeltet indeholder nu: "
-        f"{faktisk_dato!r}"
-    )
-
     if faktisk_dato != formateret_slutdato:
-        raise RuntimeError(
-            "Cura beholdt ikke den forventede slutdato. "
-            f"Forventet: {formateret_slutdato!r}. "
-            f"Feltet indeholder: {faktisk_dato!r}."
+        await session.screenshot(
+            page,
+            "ERROR_slutdato_ikke_indtastet_korrekt",
         )
 
-    gem_knap = dialog.get_by_role(
-        "button",
-        name="Gem og bestil",
-        exact=True,
+        raise RuntimeError(
+            "Slutdatoen blev ikke indtastet korrekt. "
+            f"Forventet: {formateret_slutdato!r}. "
+            f"Fundet: {faktisk_dato!r}."
+        )
+
+    # Flyt fokus, så Cura registrerer slutdatoen
+    # og aktiverer afslutningsårsagen.
+    await slutdato_input.press("Tab")
+    await page.wait_for_timeout(1_000)
+
+    faktisk_dato_efter_blur = (
+        await slutdato_input.input_value()
+    ).strip()
+
+    print(
+        "Slutdato efter validering: "
+        f"{faktisk_dato_efter_blur!r}"
     )
 
-    await gem_knap.wait_for(
-        state="visible",
-        timeout=10_000,
+    if faktisk_dato_efter_blur != formateret_slutdato:
+        await session.screenshot(
+            page,
+            "ERROR_slutdato_ikke_registreret",
+        )
+
+        raise RuntimeError(
+            "Cura registrerede ikke slutdatoen korrekt. "
+            f"Forventet: {formateret_slutdato!r}. "
+            f"Fundet: {faktisk_dato_efter_blur!r}."
+        )
+
+    # Vælg den afslutningsårsag, processen har sendt med.
+    valgt_afslutningsaarsag = (
+        await vaelg_afslutningsaarsag(
+            page=page,
+            session=session,
+            dialog=dialog,
+            afslutningsaarsag=afslutningsaarsag,
+        )
     )
 
     print(
-        "Venter på, at knappen "
-        "'Gem og bestil' bliver aktiv..."
+        "Slutdato og afslutningsårsag er udfyldt:"
+    )
+    print(
+        f"  Slutdato: {formateret_slutdato}"
+    )
+    print(
+        f"  Afslutningsårsag: "
+        f"{valgt_afslutningsaarsag}"
     )
 
-    # Vent op til 15 sekunder på, at Angular aktiverer knappen.
-    #
-    # Vi kontrollerer hvert halve sekund.
-    # Dette erstatter page.wait_for_function(), som gav fejlen
-    # med det positionelle argument.
-    antal_forsoeg = 30
-    ventetid_mellem_forsoeg_ms = 500
+    # Find knappen via Angular-funktionen.
+    gem_og_bestil_knap = dialog.locator(
+        "md-dialog-actions button"
+        '[ng-click*="SAVE_AND_ORDER"]'
+    ).filter(
+        has_text="Gem og bestil"
+    ).first
 
-    for forsoeg in range(
-        1,
-        antal_forsoeg + 1,
-    ):
-        if await gem_knap.is_enabled():
-            print(
-                "'Gem og bestil' er nu aktiv."
-            )
-            break
-
-        if forsoeg % 5 == 0:
-            print(
-                "Knappen er endnu ikke aktiv. "
-                f"Kontrol {forsoeg} af "
-                f"{antal_forsoeg}."
-            )
-
-        await page.wait_for_timeout(
-            ventetid_mellem_forsoeg_ms
+    try:
+        await gem_og_bestil_knap.wait_for(
+            state="visible",
+            timeout=15_000,
         )
 
-    else:
-        disabled_attribute = (
-            await gem_knap.get_attribute(
+    except PlaywrightTimeoutError as fejl:
+        await session.screenshot(
+            page,
+            "ERROR_gem_og_bestil_ikke_fundet",
+        )
+
+        raise RuntimeError(
+            "Knappen 'Gem og bestil' blev ikke fundet "
+            "i ydelsesdialogen."
+        ) from fejl
+
+    print(
+        "Venter på, at 'Gem og bestil' bliver aktiv..."
+    )
+
+    knap_er_aktiv = False
+
+    for forsoeg in range(1, 41):
+        disabled_attribut = (
+            await gem_og_bestil_knap.get_attribute(
                 "disabled"
             )
         )
 
-        aria_disabled_attribute = (
-            await gem_knap.get_attribute(
+        aria_disabled = (
+            await gem_og_bestil_knap.get_attribute(
                 "aria-disabled"
             )
         )
 
-        button_class = (
-            await gem_knap.get_attribute(
+        if (
+            await gem_og_bestil_knap.is_enabled()
+            and disabled_attribut is None
+            and aria_disabled != "true"
+        ):
+            knap_er_aktiv = True
+            break
+
+        if forsoeg % 4 == 0:
+            print(
+                "'Gem og bestil' er endnu ikke aktiv. "
+                f"Kontrol {forsoeg} af 40."
+            )
+
+        await page.wait_for_timeout(250)
+
+    if not knap_er_aktiv:
+        form = dialog.locator(
+            'form[name="$ctrl.editCreateActivityForm"]'
+        ).first
+
+        form_class = None
+
+        if await form.count() > 0:
+            form_class = await form.get_attribute(
                 "class"
             )
-        )
 
         await session.screenshot(
             page,
@@ -697,12 +1122,18 @@ async def udfyld_slutdato_og_gem(
 
         raise RuntimeError(
             "Knappen 'Gem og bestil' blev ikke aktiv "
-            "efter udfyldelse af slutdatoen. "
-            f"Slutdato i feltet: {faktisk_dato!r}. "
-            f"disabled-attribut: {disabled_attribute!r}. "
-            f"aria-disabled: {aria_disabled_attribute!r}. "
-            f"CSS-klasser: {button_class!r}."
+            "efter valg af slutdato og afslutningsårsag. "
+            f"Slutdato: {formateret_slutdato!r}. "
+            f"Afslutningsårsag: "
+            f"{valgt_afslutningsaarsag!r}. "
+            f"Form class: {form_class!r}."
         )
+
+    print(
+        "'Gem og bestil' er aktiv."
+    )
+
+    await page.wait_for_timeout(500)
 
     await session.screenshot(
         page,
@@ -714,54 +1145,60 @@ async def udfyld_slutdato_og_gem(
             "\nSIKKERHEDSSTOP 2:"
         )
         print(
-            "Kontrollér borger, ydelse, leverandør "
-            "og slutdato i browseren."
+            f"Slutdato: {formateret_slutdato}"
         )
         print(
-            f"Slutdato: {formateret_slutdato}"
+            f"Afslutningsårsag: "
+            f"{valgt_afslutningsaarsag}"
         )
         print(
             "Knappen 'Gem og bestil' er aktiv."
         )
         print(
-            "Der er endnu ikke klikket på knappen."
-        )
-        print(
-            "Fortsæt kun debuggeren, hvis alle "
-            "oplysninger er korrekte.\n"
+            "Der er endnu ikke klikket på knappen.\n"
         )
 
         breakpoint()
 
     # Kontrollér igen efter breakpointet.
-    # Siden kan i princippet have ændret sig, mens testen var stoppet.
-    if not await gem_knap.is_visible():
+    if not await gem_og_bestil_knap.is_visible():
         raise RuntimeError(
-            "Knappen 'Gem og bestil' er ikke længere synlig "
-            "efter sikkerhedsbreakpointet."
+            "Knappen 'Gem og bestil' er ikke længere "
+            "synlig efter sikkerhedsbreakpointet."
         )
 
-    if not await gem_knap.is_enabled():
+    if not await gem_og_bestil_knap.is_enabled():
         raise RuntimeError(
-            "Knappen 'Gem og bestil' er ikke længere aktiv "
-            "efter sikkerhedsbreakpointet."
+            "Knappen 'Gem og bestil' er ikke længere "
+            "aktiv efter sikkerhedsbreakpointet."
         )
 
     print(
         "Klikker på 'Gem og bestil'..."
     )
 
-    await gem_knap.click()
+    await gem_og_bestil_knap.click()
 
-    # Vent på, at dialogen lukker.
-    # Det er bekræftelsen på, at Cura har behandlet klikket.
-    await dialog.wait_for(
-        state="hidden",
-        timeout=30_000,
-    )
+    try:
+        await dialog.wait_for(
+            state="hidden",
+            timeout=30_000,
+        )
+
+    except PlaywrightTimeoutError as fejl:
+        await session.screenshot(
+            page,
+            "ERROR_ydelsesdialog_lukkede_ikke",
+        )
+
+        raise RuntimeError(
+            "Der blev klikket på 'Gem og bestil', "
+            "men ydelsesdialogen lukkede ikke."
+        ) from fejl
 
     print(
-        "Ydelsesdialogen er lukket."
+        "Ydelsesdialogen er lukket. "
+        "Ydelsen er gemt."
     )
 
     await session.screenshot(
@@ -777,6 +1214,7 @@ async def afslut_ydelse(
     ydelse_navn: str,
     leverandoer: str,
     slutdato: str | date | datetime,
+    afslutningsaarsag: str,
     stop_foer_gem: bool = True,
 ) -> dict[str, str]:
     """
@@ -803,17 +1241,31 @@ async def afslut_ydelse(
             - "30/09/2026"
             - "30.09.2026"
 
+        afslutningsaarsag:
+            En eksisterende valgmulighed i Cura-feltet
+            "Afslutningsårsag".
+
+            Eksempel:
+            "Klarer sig selv"
+
         stop_foer_gem:
             Stopper ved breakpoint før Gem og bestil,
             når værdien er True.
 
     Output:
         En dictionary med citizen_id, ydelsesnavn,
-        leverandør, formateret slutdato og status.
+        leverandør, slutdato, afslutningsårsag og status.
     """
-    formateret_slutdato = (
-        _format_dansk_dato(slutdato)
+    formateret_slutdato = _format_dansk_dato(
+        slutdato
     )
+
+    afslutningsaarsag = afslutningsaarsag.strip()
+
+    if not afslutningsaarsag:
+        raise ValueError(
+            "afslutningsaarsag må ikke være tom."
+        )
 
     panel = await aaben_borgerens_ydelser(
         page,
@@ -860,11 +1312,12 @@ async def afslut_ydelse(
     )
 
     await udfyld_slutdato_og_gem(
-        page,
-        session,
-        dialog,
-        slutdato_input,
-        formateret_slutdato,
+        page=page,
+        session=session,
+        dialog=dialog,
+        slutdato_input=slutdato_input,
+        slutdato=formateret_slutdato,
+        afslutningsaarsag=afslutningsaarsag,
         stop_foer_gem=stop_foer_gem,
     )
 
@@ -873,5 +1326,6 @@ async def afslut_ydelse(
         "ydelse_navn": ydelse_navn,
         "leverandoer": leverandoer,
         "slutdato": formateret_slutdato,
+        "afslutningsaarsag": afslutningsaarsag,
         "status": "afsluttet",
     }
