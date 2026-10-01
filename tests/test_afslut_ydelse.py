@@ -31,6 +31,7 @@ SLUTDATO = "30-9-2026"
 # Skal være en eksisterende valgmulighed
 # i Cura-feltet "Afslutningsårsag".
 AFSLUTNINGSAARSAG = "Klarer sig selv"
+BEMAERKNINGER = "4999,83 sko"
 
 
 async def main() -> None:
@@ -99,6 +100,7 @@ async def main() -> None:
             citizen_id=CITIZEN_ID,
             ydelse_navn=YDELSE_NAVN,
             leverandoer=LEVERANDOER,
+            bemaerkninger=BEMAERKNINGER,
             slutdato=SLUTDATO,
             afslutningsaarsag=AFSLUTNINGSAARSAG,
 
