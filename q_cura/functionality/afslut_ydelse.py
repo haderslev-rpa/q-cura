@@ -385,13 +385,16 @@ async def find_ydelse(
     panel: Locator,
     ydelse_navn: str,
     leverandoer: str,
-) -> Locator:
+) -> list[Locator]:
     """
-    Finder præcis én ydelse ud fra navn og leverandør.
+    Finder alle ydelser, der matcher navn og leverandør.
 
     Output:
-        Returnerer Playwright-locatoren til den fundne
-        ydelsesrække.
+        En liste med Playwright-locators til alle matchende
+        ydelsesrækker i den rækkefølge, de vises i Cura.
+
+    Fejl:
+        RuntimeError, hvis ingen ydelser matcher navn og leverandør.
     """
     rows = panel.locator(
         "cura-activity-overview-item"
@@ -434,20 +437,15 @@ async def find_ydelse(
             == _normaliser_tekst(ydelse_navn)
         )
 
-        leverandoer_matcher = (
-            _leverandoer_matcher(
-                leverandoer,
-                fundet_leverandoer,
-            )
+        leverandoer_matcher = _leverandoer_matcher(
+            leverandoer,
+            fundet_leverandoer,
         )
 
-        if (
-            navn_matcher
-            and leverandoer_matcher
-        ):
+        if navn_matcher and leverandoer_matcher:
             matches.append(row)
 
-    if len(matches) != 1:
+    if not matches:
         oversigt = (
             "\n - ".join(fundne)
             if fundne
@@ -455,13 +453,13 @@ async def find_ydelse(
         )
 
         raise RuntimeError(
-            "Forventede præcis én ydelse med det "
-            "angivne navn og leverandør, men fandt "
-            f"{len(matches)}. Fundne ydelser:\n"
+            "Ingen ydelse matchede det angivne navn og "
+            "den angivne leverandør. Fundne ydelser:\n"
             f" - {oversigt}"
         )
 
-    return matches[0]
+    return matches
+
 
 
 async def aaben_og_valider_ydelse(
@@ -470,13 +468,21 @@ async def aaben_og_valider_ydelse(
     ydelse_row: Locator,
     ydelse_navn: str,
     leverandoer: str,
-) -> Locator:
+    bemaerkninger: str,
+) -> Locator | None:
     """
-    Åbner ydelsen og validerer navn og leverandør.
+    Åbner én ydelse og validerer navn, leverandør og bemærkninger.
 
     Output:
-        Returnerer Playwright-locatoren til den åbne
-        ydelsesdialog.
+        Dialogens Locator, hvis alle oplysninger matcher.
+
+        None, hvis navn og leverandør matcher, men bemærkningerne
+        ikke matcher. I dette tilfælde lukkes dialogen via krydset,
+        før None returneres.
+
+    Fejl:
+        RuntimeError, hvis den åbnede ydelses navn eller leverandør
+        ikke svarer til de forventede værdier.
     """
     clickable_area = ydelse_row.locator(
         "div.mat-ripple.clickable"
@@ -503,9 +509,7 @@ async def aaben_og_valider_ydelse(
         timeout=10_000,
     )
 
-    faktisk_navn = (
-        await ydelse_input.input_value()
-    )
+    faktisk_navn = await ydelse_input.input_value()
 
     if (
         _normaliser_tekst(faktisk_navn)
@@ -531,16 +535,12 @@ async def aaben_og_valider_ydelse(
     )
 
     print(
-        f"Leverandør fra oversigten: "
+        "Leverandør fra oversigten: "
         f"{leverandoer}"
     )
     print(
-        f"Leverandør fra dialogen: "
+        "Leverandør fra dialogen: "
         f"{faktisk_leverandoer}"
-    )
-    print(
-        "Normaliseret leverandør fra dialogen: "
-        f"{_normaliser_leverandoer(faktisk_leverandoer)}"
     )
 
     if not _leverandoer_matcher(
@@ -554,9 +554,71 @@ async def aaben_og_valider_ydelse(
             f"Fundet: {faktisk_leverandoer!r}."
         )
 
+    bemaerkninger_input = dialog.locator(
+        "md-input-container:"
+        "has(label:text-is('Bemærkninger')) textarea"
+    ).first
+
+    await bemaerkninger_input.wait_for(
+        state="attached",
+        timeout=10_000,
+    )
+
+    faktiske_bemaerkninger = (
+        await bemaerkninger_input.input_value()
+    )
+
+    print(
+        "Forventede bemærkninger: "
+        f"{bemaerkninger!r}"
+    )
+    print(
+        "Bemærkninger i den åbnede ydelse: "
+        f"{faktiske_bemaerkninger!r}"
+    )
+
+    bemaerkninger_matcher = (
+        _normaliser_tekst(faktiske_bemaerkninger)
+        == _normaliser_tekst(bemaerkninger)
+    )
+
+    if not bemaerkninger_matcher:
+        await session.screenshot(
+            page,
+            "STEP_3_bemaerkninger_matcher_ikke",
+        )
+
+        luk_dialog_knap = dialog.locator(
+            "button.md-icon-button:"
+            "has(md-icon.mdi-close)"
+        ).first
+
+        await luk_dialog_knap.wait_for(
+            state="visible",
+            timeout=10_000,
+        )
+
+        print(
+            "Bemærkningerne matcher ikke. "
+            "Lukker ydelsesdialogen via krydset."
+        )
+
+        await luk_dialog_knap.click()
+
+        await dialog.wait_for(
+            state="hidden",
+            timeout=15_000,
+        )
+
+        return None
+
     await session.screenshot(
         page,
         "STEP_3_ydelse_valideret",
+    )
+
+    print(
+        "Navn, leverandør og bemærkninger matcher."
     )
 
     return dialog
@@ -1213,12 +1275,16 @@ async def afslut_ydelse(
     citizen_id: str,
     ydelse_navn: str,
     leverandoer: str,
+    bemaerkninger: str,
     slutdato: str | date | datetime,
-    afslutningsaarsag: str,
     stop_foer_gem: bool = True,
 ) -> dict[str, str]:
     """
     Åbner, finder, validerer og afslutter én ydelse.
+
+    Funktionen undersøger alle ydelser, der matcher navn og
+    leverandør. Ydelserne åbnes én ad gangen, indtil en ydelse
+    med de forventede bemærkninger findes.
 
     Input:
         citizen_id:
@@ -1228,44 +1294,36 @@ async def afslut_ydelse(
             Det præcise navn på ydelsen.
 
         leverandoer:
-            Det korte leverandørnavn fra
-            Hjælpemidler-oversigten.
+            Det korte leverandørnavn fra Hjælpemidler-oversigten.
+
+        bemaerkninger:
+            Den præcise bemærkningstekst, som forventes i den
+            åbnede Cura-ydelse.
 
         slutdato:
             Dansk dato i rækkefølgen dag, måned, år.
-
-            Punktum er ikke påkrævet.
-
-            Eksempler:
-            - "30-9-2026"
-            - "30/09/2026"
-            - "30.09.2026"
-
-        afslutningsaarsag:
-            En eksisterende valgmulighed i Cura-feltet
-            "Afslutningsårsag".
-
-            Eksempel:
-            "Klarer sig selv"
 
         stop_foer_gem:
             Stopper ved breakpoint før Gem og bestil,
             når værdien er True.
 
     Output:
-        En dictionary med citizen_id, ydelsesnavn,
-        leverandør, slutdato, afslutningsårsag og status.
+        En dictionary med citizen_id, ydelsesnavn, leverandør,
+        bemærkninger, formateret slutdato og status.
+
+    Fejl:
+        RuntimeError, hvis ingen af de matchende ydelser har de
+        forventede bemærkninger.
     """
+    bemaerkninger = str(
+        bemaerkninger
+        if bemaerkninger is not None
+        else ""
+    )
+
     formateret_slutdato = _format_dansk_dato(
         slutdato
     )
-
-    afslutningsaarsag = afslutningsaarsag.strip()
-
-    if not afslutningsaarsag:
-        raise ValueError(
-            "afslutningsaarsag må ikke være tom."
-        )
 
     panel = await aaben_borgerens_ydelser(
         page,
@@ -1291,33 +1349,68 @@ async def afslut_ydelse(
             f"{ydelse['aktiv_periode']}"
         )
 
-    ydelse_row = await find_ydelse(
+    matchende_ydelser = await find_ydelse(
         panel,
         ydelse_navn,
         leverandoer,
     )
 
-    dialog = await aaben_og_valider_ydelse(
-        page,
-        session,
-        ydelse_row,
-        ydelse_navn,
-        leverandoer,
+    print(
+        f"Fandt {len(matchende_ydelser)} ydelse(r), "
+        "der matcher navn og leverandør."
     )
+
+    valgt_dialog: Locator | None = None
+
+    for nummer, ydelse_row in enumerate(
+        matchende_ydelser,
+        start=1,
+    ):
+        print(
+            f"Kontrollerer matchende ydelse "
+            f"{nummer} af {len(matchende_ydelser)}."
+        )
+
+        dialog = await aaben_og_valider_ydelse(
+            page=page,
+            session=session,
+            ydelse_row=ydelse_row,
+            ydelse_navn=ydelse_navn,
+            leverandoer=leverandoer,
+            bemaerkninger=bemaerkninger,
+        )
+
+        if dialog is not None:
+            valgt_dialog = dialog
+            break
+
+    if valgt_dialog is None:
+        await session.screenshot(
+            page,
+            "ERROR_ingen_ydelse_med_matchende_bemaerkninger",
+        )
+
+        raise RuntimeError(
+            "Der blev fundet ydelse(r), som matchede navn og "
+            "leverandør, men ingen af dem havde de forventede "
+            "bemærkninger. "
+            f"Forventede bemærkninger: {bemaerkninger!r}. "
+            f"Antal kontrollerede ydelser: "
+            f"{len(matchende_ydelser)}."
+        )
 
     slutdato_input = await aktiver_redigering(
         page,
         session,
-        dialog,
+        valgt_dialog,
     )
 
     await udfyld_slutdato_og_gem(
-        page=page,
-        session=session,
-        dialog=dialog,
-        slutdato_input=slutdato_input,
-        slutdato=formateret_slutdato,
-        afslutningsaarsag=afslutningsaarsag,
+        page,
+        session,
+        valgt_dialog,
+        slutdato_input,
+        formateret_slutdato,
         stop_foer_gem=stop_foer_gem,
     )
 
@@ -1325,7 +1418,7 @@ async def afslut_ydelse(
         "citizen_id": citizen_id,
         "ydelse_navn": ydelse_navn,
         "leverandoer": leverandoer,
+        "bemaerkninger": bemaerkninger,
         "slutdato": formateret_slutdato,
-        "afslutningsaarsag": afslutningsaarsag,
         "status": "afsluttet",
     }
