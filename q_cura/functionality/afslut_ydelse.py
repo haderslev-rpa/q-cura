@@ -1276,17 +1276,25 @@ async def afslut_ydelse(
     ydelse_navn: str,
     leverandoer: str,
     bemaerkninger: str,
+    afslutningsaarsag: str,
     slutdato: str | date | datetime,
     stop_foer_gem: bool = True,
 ) -> dict[str, str]:
     """
     Åbner, finder, validerer og afslutter én ydelse.
 
-    Funktionen undersøger alle ydelser, der matcher navn og
-    leverandør. Ydelserne åbnes én ad gangen, indtil en ydelse
-    med de forventede bemærkninger findes.
+    Funktionen finder alle ydelser, som matcher navn og
+    leverandør. Ydelserne åbnes én ad gangen, indtil
+    bemærkningsfeltet matcher de forventede bemærkninger.
 
     Input:
+        page:
+            Den aktive Playwright-side.
+
+        session:
+            BrowserSession, som blandt andet bruges til
+            screenshots.
+
         citizen_id:
             Borgerens Cura-id.
 
@@ -1294,11 +1302,16 @@ async def afslut_ydelse(
             Det præcise navn på ydelsen.
 
         leverandoer:
-            Det korte leverandørnavn fra Hjælpemidler-oversigten.
+            Det korte leverandørnavn fra
+            Hjælpemidler-oversigten.
 
         bemaerkninger:
-            Den præcise bemærkningstekst, som forventes i den
-            åbnede Cura-ydelse.
+            Den præcise værdi, som skal stå i den åbnede
+            ydelses bemærkningsfelt.
+
+        afslutningsaarsag:
+            Den afslutningsårsag, som skal vælges i Cura.
+            Eksempel: "Klarer sig selv".
 
         slutdato:
             Dansk dato i rækkefølgen dag, måned, år.
@@ -1308,33 +1321,58 @@ async def afslut_ydelse(
             når værdien er True.
 
     Output:
-        En dictionary med citizen_id, ydelsesnavn, leverandør,
-        bemærkninger, formateret slutdato og status.
-
-    Fejl:
-        RuntimeError, hvis ingen af de matchende ydelser har de
-        forventede bemærkninger.
+        En dictionary med borger-id, ydelsesnavn,
+        leverandør, bemærkninger, afslutningsårsag,
+        formateret slutdato og status.
     """
+    citizen_id = str(citizen_id or "").strip()
+    ydelse_navn = str(ydelse_navn or "").strip()
+    leverandoer = str(leverandoer or "").strip()
+
     bemaerkninger = str(
         bemaerkninger
         if bemaerkninger is not None
         else ""
     )
 
+    afslutningsaarsag = str(
+        afslutningsaarsag or ""
+    ).strip()
+
+    if not citizen_id:
+        raise ValueError(
+            "citizen_id må ikke være tomt."
+        )
+
+    if not ydelse_navn:
+        raise ValueError(
+            "ydelse_navn må ikke være tomt."
+        )
+
+    if not leverandoer:
+        raise ValueError(
+            "leverandoer må ikke være tomt."
+        )
+
+    if not afslutningsaarsag:
+        raise ValueError(
+            "afslutningsaarsag må ikke være tom."
+        )
+
     formateret_slutdato = _format_dansk_dato(
         slutdato
     )
 
     panel = await aaben_borgerens_ydelser(
-        page,
-        session,
-        citizen_id,
+        page=page,
+        session=session,
+        citizen_id=citizen_id,
     )
 
     ydelser = await hent_hjaelpemidler(
-        panel,
-        session,
-        page,
+        panel=panel,
+        session=session,
+        page=page,
     )
 
     print(
@@ -1350,9 +1388,9 @@ async def afslut_ydelse(
         )
 
     matchende_ydelser = await find_ydelse(
-        panel,
-        ydelse_navn,
-        leverandoer,
+        panel=panel,
+        ydelse_navn=ydelse_navn,
+        leverandoer=leverandoer,
     )
 
     print(
@@ -1400,17 +1438,18 @@ async def afslut_ydelse(
         )
 
     slutdato_input = await aktiver_redigering(
-        page,
-        session,
-        valgt_dialog,
+        page=page,
+        session=session,
+        dialog=valgt_dialog,
     )
 
     await udfyld_slutdato_og_gem(
-        page,
-        session,
-        valgt_dialog,
-        slutdato_input,
-        formateret_slutdato,
+        page=page,
+        session=session,
+        dialog=valgt_dialog,
+        slutdato_input=slutdato_input,
+        slutdato=formateret_slutdato,
+        afslutningsaarsag=afslutningsaarsag,
         stop_foer_gem=stop_foer_gem,
     )
 
@@ -1419,6 +1458,7 @@ async def afslut_ydelse(
         "ydelse_navn": ydelse_navn,
         "leverandoer": leverandoer,
         "bemaerkninger": bemaerkninger,
+        "afslutningsaarsag": afslutningsaarsag,
         "slutdato": formateret_slutdato,
         "status": "afsluttet",
     }
